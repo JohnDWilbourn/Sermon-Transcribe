@@ -140,7 +140,7 @@ Example log output:
 ## Requirements
 
 - Python 3.7+
-- watchdog>=3.0.0 (for file system monitoring capabilities)
+- No external dependencies required (uses only Python standard library)
 
 ## License
 

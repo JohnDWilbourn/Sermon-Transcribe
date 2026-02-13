@@ -7,7 +7,6 @@ transcription files into content-descriptive outputs, logs all actions,
 and deletes input files after processing.
 """
 
-import os
 import sys
 import time
 import json
@@ -15,7 +14,7 @@ import logging
 import argparse
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict
 import re
 
 
@@ -123,17 +122,18 @@ class TranscriptionMerger:
         """Merge JSON transcription files."""
         try:
             self.logger.info(f"Merging {len(files)} JSON files into {output_path}")
+            sorted_files = sorted(files)
             merged_data = {
                 'segments': [],
                 'text': '',
                 'metadata': {
-                    'merged_from': [str(f) for f in files],
+                    'merged_from': [str(f) for f in sorted_files],
                     'merge_timestamp': datetime.now().isoformat(),
                     'total_segments': 0
                 }
             }
 
-            for file_path in sorted(files):
+            for file_path in sorted_files:
                 self.logger.debug(f"Processing JSON file: {file_path}")
                 with file_path.open('r', encoding='utf-8') as infile:
                     data = json.load(infile)
@@ -176,6 +176,12 @@ class LogMonitor:
 
         try:
             with self.log_file.open('r', encoding='utf-8') as f:
+                # Handle log rotation/truncation: reset position if file is smaller
+                file_size = self.log_file.stat().st_size
+                if file_size < self.last_position:
+                    self.logger.info("Log file truncated or rotated, resetting position")
+                    self.last_position = 0
+                
                 f.seek(self.last_position)
                 new_lines = f.readlines()
                 self.last_position = f.tell()
@@ -223,9 +229,9 @@ class WorkflowAutomation:
         self.logger = logging.getLogger('SermonTranscribe')
         self.logger.info("Workflow automation initialized")
 
-    def find_segment_files(self, input_dir: Path, pattern: str) -> Dict[str, List[Path]]:
+    def find_segment_files(self, input_dir: Path) -> Dict[str, List[Path]]:
         """Find segmented files grouped by base name and extension."""
-        self.logger.info(f"Scanning for segment files in {input_dir} with pattern {pattern}")
+        self.logger.info(f"Scanning for segment files in {input_dir}")
         
         files_by_type = {}
         if not input_dir.exists():
@@ -248,9 +254,10 @@ class WorkflowAutomation:
                 # Only include groups with multiple files
                 for base_name, file_list in grouped.items():
                     if len(file_list) > 1:
-                        key = f"{base_name}{ext}"
+                        # Store with tuple key (base_name, ext) to avoid double extension issue
+                        key = (base_name, ext)
                         files_by_type[key] = sorted(file_list)
-                        self.logger.info(f"Found {len(file_list)} segment files for {key}")
+                        self.logger.info(f"Found {len(file_list)} segment files for {base_name}{ext}")
 
         return files_by_type
 
@@ -293,18 +300,17 @@ class WorkflowAutomation:
 
         self.logger.info("Starting file processing")
         
-        files_by_type = self.find_segment_files(input_dir, self.config.get('file_pattern', '*'))
+        files_by_type = self.find_segment_files(input_dir)
         
         if not files_by_type:
             self.logger.info("No segment files found to process")
             return
 
-        for base_name, files in files_by_type.items():
-            ext = files[0].suffix
+        for (base_name, ext), files in files_by_type.items():
             output_name = f"{base_name}_merged{ext}"
             output_path = output_dir / output_name
             
-            self.logger.info(f"Processing {base_name}: {len(files)} files -> {output_path}")
+            self.logger.info(f"Processing {base_name}{ext}: {len(files)} files -> {output_path}")
             
             if self.merge_files(files, output_path):
                 self.logger.info(f"Successfully created merged file: {output_path}")
@@ -312,7 +318,7 @@ class WorkflowAutomation:
                 if self.config.get('delete_after_processing', True):
                     self.cleanup_files(files)
             else:
-                self.logger.error(f"Failed to merge files for {base_name}")
+                self.logger.error(f"Failed to merge files for {base_name}{ext}")
 
     def run(self):
         """Main run loop."""
@@ -398,8 +404,7 @@ def main():
         'check_interval': args.check_interval,
         'delete_after_processing': not args.no_delete,
         'log_level': args.log_level,
-        'completion_pattern': args.completion_pattern,
-        'file_pattern': '*'
+        'completion_pattern': args.completion_pattern
     }
 
     automation = WorkflowAutomation(config)

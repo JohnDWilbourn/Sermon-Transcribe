@@ -1,1 +1,3 @@
-watchdog>=3.0.0
+# No external dependencies required
+# This application uses only Python standard library modules
+
