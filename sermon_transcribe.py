@@ -177,12 +177,20 @@ class LogMonitor:
         try:
             with self.log_file.open('r', encoding='utf-8') as f:
                 # Handle log rotation/truncation: reset position if file is smaller
-                file_size = self.log_file.stat().st_size
-                if file_size < self.last_position:
-                    self.logger.info("Log file truncated or rotated, resetting position")
+                # Check inside the file context to avoid race conditions
+                try:
+                    file_size = self.log_file.stat().st_size
+                    if file_size < self.last_position:
+                        self.logger.info("Log file truncated or rotated, resetting position")
+                        self.last_position = 0
+                    
+                    f.seek(self.last_position)
+                except (IOError, OSError) as e:
+                    # Handle race conditions during log rotation
+                    self.logger.warning(f"Error seeking in log file, resetting position: {e}")
                     self.last_position = 0
+                    f.seek(0)
                 
-                f.seek(self.last_position)
                 new_lines = f.readlines()
                 self.last_position = f.tell()
 
@@ -254,7 +262,10 @@ class WorkflowAutomation:
                 # Only include groups with multiple files
                 for base_name, file_list in grouped.items():
                     if len(file_list) > 1:
-                        # Store with tuple key (base_name, ext) to avoid double extension issue
+                        # Store with tuple key (base_name, ext) to avoid double extension issue.
+                        # Using tuples prevents output names like "sermon.txt_merged.txt" 
+                        # (which would occur with string concatenation of "sermon.txt" + "_merged.txt").
+                        # Instead, we get clean names like "sermon_merged.txt".
                         key = (base_name, ext)
                         files_by_type[key] = sorted(file_list)
                         self.logger.info(f"Found {len(file_list)} segment files for {base_name}{ext}")
